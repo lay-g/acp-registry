@@ -1,0 +1,99 @@
+name: Fork Update Versions
+
+on:
+  schedule:
+    - cron: "15 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      agents:
+        description: "Comma-separated agent IDs to auto-check (leave empty for all)"
+        required: false
+        default: ""
+        type: string
+      set:
+        description: "Manual versions, space-separated: id=version or id=version@preview (skips auth check)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+# Shared with fork-sync-upstream so the two never push to main concurrently.
+concurrency:
+  group: fork-main-writer
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository != 'agentclientprotocol/registry'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "lts/*"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+
+      - name: Apply manual versions
+        id: manual
+        if: inputs.set != ''
+        env:
+          INPUT_SET: ${{ inputs.set }}
+        run: |
+          read -ra ENTRIES <<< "$INPUT_SET"
+          python3 .github/fork/fork_tools.py set "${ENTRIES[@]}"
+          IDS=$(printf '%s\n' "${ENTRIES[@]}" | cut -d= -f1 | paste -sd, -)
+          echo "ids=$IDS" >> "$GITHUB_OUTPUT"
+
+      - name: Apply automatic updates
+        if: inputs.set == ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          INPUT_AGENTS: ${{ inputs.agents }}
+        run: |
+          ARGS=(--apply)
+          if [ -n "$INPUT_AGENTS" ]; then
+            if [[ ! "$INPUT_AGENTS" =~ ^[a-z0-9-]+(,[a-z0-9-]+)*$ ]]; then
+              echo "Invalid agents input: $INPUT_AGENTS" >&2
+              exit 1
+            fi
+            ARGS+=(--agents "$INPUT_AGENTS")
+          fi
+          # Exit 1 only means some agents could not be checked; others may still be updated.
+          python3 .github/fork/fork_tools.py update "${ARGS[@]}" || echo "::warning::Version check reported errors"
+
+      - name: Verify updated agents
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MANUAL_IDS: ${{ steps.manual.outputs.ids }}
+        run: python3 .github/fork/fork_tools.py verify-changed --exclude "$MANUAL_IDS"
+
+      - name: Validate registry build
+        run: uv run --with jsonschema .github/workflows/build_registry.py --dry-run
+
+      - name: Commit and push
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 .github/fork/fork_tools.py summary > "$RUNNER_TEMP/commit-msg.txt"
+          git add -- '*/agent.json'
+          git commit -F "$RUNNER_TEMP/commit-msg.txt"
+          git push origin HEAD:main

@@ -1,0 +1,5 @@
+{
+  "unquarantine": ["crow-cli", "qoder"],
+  "skip_verify": ["minimax-code"],
+  "pin": {}
+}

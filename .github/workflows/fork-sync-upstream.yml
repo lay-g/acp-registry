@@ -1,0 +1,85 @@
+name: Fork Sync Upstream
+
+on:
+  schedule:
+    - cron: "30 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+# Shared with fork-update-versions so the two never push to main concurrently.
+concurrency:
+  group: fork-main-writer
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository != 'agentclientprotocol/registry'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          # Merges that touch .github/workflows need a token with the `workflow` scope.
+          token: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Merge upstream main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/agentclientprotocol/registry.git
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date with upstream"
+            exit 0
+          fi
+
+          if ! git merge --no-edit upstream/main; then
+            python3 .github/fork/fork_tools.py resolve-conflicts
+            git commit --no-edit
+          fi
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+
+      - name: Validate registry build
+        run: uv run --with jsonschema .github/workflows/build_registry.py --dry-run
+
+      - name: Push to main
+        run: git push origin HEAD:main
+
+      - name: Report failure
+        if: failure()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const title = 'Fork sync with upstream failed';
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 50,
+            });
+            const existing = issues.find(i => i.title === title);
+            const body = `Run: ${runUrl}\n\nMerge \`upstream/main\` locally, resolve the conflicts, then push.`;
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo, title, body,
+              });
+            }
