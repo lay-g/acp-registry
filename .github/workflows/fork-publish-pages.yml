@@ -7,9 +7,11 @@ on:
       - "*/agent.json"
       - "*/icon.svg"
       - "*.schema.json"
-  # Pushes made with GITHUB_TOKEN (fork-update-versions) do not trigger `push`.
+      - ".github/workflows/build_registry.py"
+  # Pushes made with GITHUB_TOKEN (fork-update-versions) do not trigger `push`;
+  # fork-sync-upstream pushes with FORK_SYNC_TOKEN, so `push` covers it.
   workflow_run:
-    workflows: ["Fork Update Versions", "Fork Sync Upstream"]
+    workflows: ["Fork Update Versions"]
     types: [completed]
   workflow_dispatch:
 
@@ -21,10 +23,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  changes:
     if: >-
       github.repository != 'agentclientprotocol/registry' &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - name: Check for new commits
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # The update run checked out RUN_HEAD_SHA; main is unchanged if it pushed nothing.
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+            if [ "$MAIN_SHA" = "$RUN_HEAD_SHA" ]; then
+              echo "No new commits on main; skipping publish"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
