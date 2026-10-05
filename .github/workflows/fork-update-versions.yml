@@ -80,7 +80,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MANUAL_IDS: ${{ steps.manual.outputs.ids }}
-        run: python3 .github/fork/fork_tools.py verify-changed --exclude "$MANUAL_IDS"
+        run: uv run --with jsonschema python .github/fork/fork_tools.py verify-changed --exclude "$MANUAL_IDS"
 
       - name: Validate registry build
         run: uv run --with jsonschema .github/workflows/build_registry.py --dry-run

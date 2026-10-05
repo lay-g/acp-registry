@@ -138,12 +138,39 @@ def changed_agents() -> dict[str, dict[str, tuple[str | None, str | None]]]:
     return result
 
 
+def revert_agent(agent_id: str, reason: str) -> None:
+    rel_path = f"{agent_id}/agent.json"
+    (REPO_ROOT / rel_path).write_text(git("show", f"HEAD:{rel_path}"))
+    print(f"::warning title=Fork update reverted::{agent_id}: {reason}")
+
+
+def registry_errors(agent_id: str) -> list[str]:
+    """Run the upstream per-agent build checks (schema, versions, URLs, icon)."""
+    import build_registry
+
+    _, errors = build_registry.process_entry(
+        REPO_ROOT / agent_id,
+        "agent.json",
+        "agent",
+        build_registry.load_schema(REPO_ROOT),
+        build_registry.get_base_url(),
+        {},
+    )
+    return errors
+
+
 def cmd_verify_changed(argv: list[str]) -> None:
     exclude: set[str] = set()
     if argv[:1] == ["--exclude"] and len(argv) > 1:
         exclude = {a for a in argv[1].split(",") if a}
     config = load_config()
     for agent_id, channels in sorted(changed_agents().items()):
+        # One broken agent must not block the whole batch from committing.
+        errors = registry_errors(agent_id)
+        if errors:
+            print("\n".join(errors))
+            revert_agent(agent_id, "registry validation failed")
+            continue
         # Preview distributions are never launched upstream either.
         if "stable" not in channels:
             continue
@@ -157,9 +184,7 @@ def cmd_verify_changed(argv: list[str]) -> None:
         )
         print("::endgroup::", flush=True)
         if proc.returncode != 0:
-            rel_path = f"{agent_id}/agent.json"
-            (REPO_ROOT / rel_path).write_text(git("show", f"HEAD:{rel_path}"))
-            print(f"::warning title=Fork update reverted::{agent_id} failed auth verification")
+            revert_agent(agent_id, "auth verification failed")
 
 
 def cmd_summary(_argv: list[str]) -> None:
