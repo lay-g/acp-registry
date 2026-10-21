@@ -1,0 +1,42 @@
+{
+  "id": "kiro",
+  "name": "Kiro",
+  "version": "2.33.0",
+  "description": "Kiro autonomous coding agent",
+  "website": "https://kiro.dev",
+  "authors": [
+    "Amazon Web Services"
+  ],
+  "license": "proprietary",
+  "license_url": "https://aws.amazon.com/terms/",
+  "distribution": {
+    "binary": {
+      "linux-x86_64": {
+        "archive": "https://prod.download.cli.kiro.dev/stable/2.33.0/kirocli-x86_64-linux.tar.gz",
+        "cmd": "./kiro-cli",
+        "args": [
+          "acp"
+        ]
+      },
+      "linux-aarch64": {
+        "archive": "https://prod.download.cli.kiro.dev/stable/2.33.0/kirocli-aarch64-linux.tar.gz",
+        "cmd": "./kiro-cli",
+        "args": [
+          "acp"
+        ]
+      },
+      "darwin-aarch64": {
+        "archive": "https://raw.githubusercontent.com/lay-g/acp-registry/main/kiro/launchers/kiro-darwin.zip",
+        "cmd": "./run.sh"
+      },
+      "darwin-x86_64": {
+        "archive": "https://raw.githubusercontent.com/lay-g/acp-registry/main/kiro/launchers/kiro-darwin.zip",
+        "cmd": "./run.sh"
+      },
+      "windows-x86_64": {
+        "archive": "https://raw.githubusercontent.com/lay-g/acp-registry/main/kiro/launchers/kiro-windows.zip",
+        "cmd": "run.bat"
+      }
+    }
+  }
+}
