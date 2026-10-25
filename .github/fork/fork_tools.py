@@ -7,10 +7,11 @@ Subcommands:
     set ID=VERSION[@preview] ...       Force agents to a version (manual override)
     verify-changed [--exclude IDS]     Auth-check changed agents; revert those that fail
     summary                            Print a commit message for the working-tree changes
-    resolve-conflicts                  Resolve agent.json merge conflicts after an upstream merge
+    resolve-conflicts                  Resolve merge conflicts after an upstream merge
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,19 @@ from registry_utils import load_quarantine, semver_sort_key  # noqa: E402
 
 # Fields that change on every release; differences elsewhere count as structural.
 VOLATILE_KEYS = {"version", "package", "archive", "sha256"}
+
+# Conflict hunks left in the working tree by a failed `git merge`.
+CONFLICT_HUNK_RE = re.compile(
+    r"^<<<<<<< [^\n]*\n(?P<ours>.*?)^=======\n(?P<theirs>.*?)^>>>>>>> [^\n]*\n",
+    re.MULTILINE | re.DOTALL,
+)
+CUSTOM_SOURCE_IMPORT_RE = re.compile(
+    r"^from custom_agent_sources import (?P<names>.+)$", re.MULTILINE
+)
+SOURCE_ENTRY_RE = re.compile(
+    r'^\s*\("(?P<agent>[^"]+)",\s*"(?P<channel>[^"]+)"\):\s*(?P<fn>[A-Za-z_][\w.]*),?\s*$'
+)
+REGISTRY_URL_RE = re.compile(r"^https?://\S+$")
 
 
 def load_config() -> dict:
@@ -227,29 +241,130 @@ def resolve_agent_conflict(base: dict, ours: dict, theirs: dict) -> dict | None:
     return None
 
 
+def merge_import_hunk(ours: str, theirs: str) -> str | None:
+    """Union the custom-source imports of both sides."""
+    m_ours = CUSTOM_SOURCE_IMPORT_RE.search(ours)
+    m_theirs = CUSTOM_SOURCE_IMPORT_RE.search(theirs)
+    if not m_ours or not m_theirs:
+        return None
+    names = {name.strip() for name in m_ours.group("names").split(",")}
+    names |= {name.strip() for name in m_theirs.group("names").split(",")}
+    ordered = sorted(names, key=lambda name: (name != "CustomSourceFn", name))
+    return f"from custom_agent_sources import {', '.join(ordered)}"
+
+
+def parse_source_entries(text: str) -> list[tuple[str, str, str, str]] | None:
+    """Parse CUSTOM_AGENT_SOURCES entry lines; None when the text is not entry lines."""
+    entries = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        match = SOURCE_ENTRY_RE.match(line)
+        if not match:
+            return None
+        entries.append(
+            (match.group("agent"), match.group("channel"), match.group("fn"), line)
+        )
+    return entries or None
+
+
+def merge_source_entries_hunk(ours: str, theirs: str) -> str | None:
+    """Union CUSTOM_AGENT_SOURCES entries; the same key with a different source needs a human."""
+    ours_entries = parse_source_entries(ours)
+    theirs_entries = parse_source_entries(theirs)
+    if not ours_entries or not theirs_entries:
+        return None
+    ours_by_key = {(agent, channel): (fn, line) for agent, channel, fn, line in ours_entries}
+    for agent, channel, fn, _ in theirs_entries:
+        existing = ours_by_key.get((agent, channel))
+        if existing and existing[0] != fn:
+            return None
+    lines = [line for *_, line in ours_entries]
+    lines += [
+        line
+        for agent, channel, _, line in theirs_entries
+        if (agent, channel) not in ours_by_key
+    ]
+    return "\n".join(lines)
+
+
+def merge_registry_urls_hunk(ours: str, theirs: str) -> str | None:
+    """Keep the fork's registry base URL, adopt upstream's file list."""
+    ours_urls = [line.strip() for line in ours.splitlines() if line.strip()]
+    theirs_urls = [line.strip() for line in theirs.splitlines() if line.strip()]
+    if not ours_urls or not theirs_urls:
+        return None
+    if not all(REGISTRY_URL_RE.match(url) for url in ours_urls + theirs_urls):
+        return None
+    names = [url.rsplit("/", 1)[1] for url in theirs_urls]
+    for url in ours_urls:
+        name = url.rsplit("/", 1)[1]
+        if name not in names:
+            names.append(name)
+    base = ours_urls[0].rsplit("/", 1)[0] + "/"
+    return "\n".join(base + name for name in names)
+
+
+# Files the fork intentionally diverges on, and how to merge their conflict hunks.
+CONFLICT_HANDLERS = {
+    ".github/workflows/update_versions.py": (merge_import_hunk, merge_source_entries_hunk),
+    "README.md": (merge_registry_urls_hunk,),
+}
+
+
+def merge_conflict_hunks(text: str, handlers) -> str | None:
+    """Merge every conflict hunk in text; None when a hunk cannot be merged."""
+    def replace(match: re.Match) -> str:
+        for handler in handlers:
+            merged = handler(match.group("ours"), match.group("theirs"))
+            if merged is not None:
+                return merged if merged.endswith("\n") else merged + "\n"
+        return match.group(0)
+
+    merged_text = CONFLICT_HUNK_RE.sub(replace, text)
+    return None if "<<<<<<<" in merged_text else merged_text
+
+
+def merge_conflict_file(rel_path: str) -> bool:
+    """Merge every conflict hunk of a text file; False when a hunk needs a human."""
+    handlers = CONFLICT_HANDLERS.get(rel_path)
+    if not handlers:
+        return False
+    path = REPO_ROOT / rel_path
+    merged_text = merge_conflict_hunks(path.read_text(), handlers)
+    if merged_text is None:
+        return False
+    path.write_text(merged_text)
+    git("add", rel_path)
+    return True
+
+
 def cmd_resolve_conflicts(_argv: list[str]) -> None:
     conflicted = git("diff", "--name-only", "--diff-filter=U").splitlines()
     unresolved = []
     for rel_path in conflicted:
         parts = Path(rel_path).parts
-        if len(parts) != 2 or parts[1] != "agent.json":
-            unresolved.append(rel_path)
+        if len(parts) == 2 and parts[1] == "agent.json":
+            try:
+                base, ours, theirs = (
+                    json.loads(git("show", f":{stage}:{rel_path}")) for stage in (1, 2, 3)
+                )
+            except subprocess.CalledProcessError:
+                unresolved.append(rel_path)
+                continue
+            chosen = resolve_agent_conflict(base, ours, theirs)
+            if chosen is None:
+                unresolved.append(rel_path)
+                continue
+            side = "upstream" if chosen is theirs else "fork"
+            (REPO_ROOT / rel_path).write_text(json.dumps(chosen, indent=2) + "\n")
+            git("add", rel_path)
+            print(f"Resolved {rel_path} using {side} version")
             continue
-        try:
-            base, ours, theirs = (
-                json.loads(git("show", f":{stage}:{rel_path}")) for stage in (1, 2, 3)
-            )
-        except subprocess.CalledProcessError:
-            unresolved.append(rel_path)
+        if merge_conflict_file(rel_path):
+            print(f"Resolved {rel_path} by merging conflict hunks")
             continue
-        chosen = resolve_agent_conflict(base, ours, theirs)
-        if chosen is None:
-            unresolved.append(rel_path)
-            continue
-        side = "upstream" if chosen is theirs else "fork"
-        (REPO_ROOT / rel_path).write_text(json.dumps(chosen, indent=2) + "\n")
-        git("add", rel_path)
-        print(f"Resolved {rel_path} using {side} version")
+        unresolved.append(rel_path)
     if unresolved:
         print("Unresolved conflicts:", file=sys.stderr)
         for rel_path in unresolved:
