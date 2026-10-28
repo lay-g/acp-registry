@@ -93,6 +93,21 @@ def test_registry_urls_hunk_keeps_fork_base():
     )
 
 
+def test_registry_urls_hunk_keeps_badges_around_fork_link():
+    ours = "https://github.com/lay-g/acp-registry\n"
+    theirs = (
+        "[![Check License URLs](https://example.com/badge.svg)](https://example.com)\n"
+        "\n"
+        "https://agentclientprotocol.com/registry\n"
+    )
+    merged = merge_registry_urls_hunk(ours, theirs)
+    assert merged == (
+        "[![Check License URLs](https://example.com/badge.svg)](https://example.com)\n"
+        "\n"
+        "https://github.com/lay-g/acp-registry"
+    )
+
+
 def test_merge_conflict_hunks_resolves_both_hunks():
     text = (
         "head\n"

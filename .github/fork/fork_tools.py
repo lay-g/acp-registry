@@ -40,6 +40,8 @@ SOURCE_ENTRY_RE = re.compile(
     r'^\s*\("(?P<agent>[^"]+)",\s*"(?P<channel>[^"]+)"\):\s*(?P<fn>[A-Za-z_][\w.]*),?\s*$'
 )
 REGISTRY_URL_RE = re.compile(r"^https?://\S+$")
+# Registry manifest links end in a file name; repo/site links do not.
+FILE_URL_RE = re.compile(r"^https?://\S+/\S+\.[A-Za-z0-9]+$")
 
 
 def load_config() -> dict:
@@ -290,12 +292,16 @@ def merge_source_entries_hunk(ours: str, theirs: str) -> str | None:
 
 def merge_registry_urls_hunk(ours: str, theirs: str) -> str | None:
     """Keep the fork's registry base URL, adopt upstream's file list."""
-    ours_urls = [line.strip() for line in ours.splitlines() if line.strip()]
-    theirs_urls = [line.strip() for line in theirs.splitlines() if line.strip()]
+    ours_lines = [line.strip() for line in ours.splitlines() if line.strip()]
+    theirs_lines = [line.strip() for line in theirs.splitlines() if line.strip()]
+    ours_urls = [line for line in ours_lines if REGISTRY_URL_RE.match(line)]
+    theirs_urls = [line for line in theirs_lines if REGISTRY_URL_RE.match(line)]
     if not ours_urls or not theirs_urls:
         return None
-    if not all(REGISTRY_URL_RE.match(url) for url in ours_urls + theirs_urls):
-        return None
+    if not all(FILE_URL_RE.match(url) for url in ours_urls + theirs_urls):
+        # Repo/site links: the fork's own line wins, upstream's prose and badges stay.
+        prose = [line for line in theirs_lines if not REGISTRY_URL_RE.match(line)]
+        return "\n".join([*prose, "", *ours_urls] if prose else ours_urls)
     names = [url.rsplit("/", 1)[1] for url in theirs_urls]
     for url in ours_urls:
         name = url.rsplit("/", 1)[1]

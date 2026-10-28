@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 # Shared with fork-update-versions so the two never push to main concurrently.
 concurrency:
@@ -60,26 +59,13 @@ jobs:
 
       - name: Report failure
         if: failure()
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        with:
-          script: |
-            const title = 'Fork sync with upstream failed';
-            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            const { data: issues } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              per_page: 50,
-            });
-            const existing = issues.find(i => i.title === title);
-            const body = `Run: ${runUrl}\n\nMerge \`upstream/main\` locally, resolve the conflicts, then push.`;
-            if (existing) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: existing.number, body,
-              });
-            } else {
-              await github.rest.issues.create({
-                owner: context.repo.owner, repo: context.repo.repo, title, body,
-              });
-            }
+        run: |
+          # The fork has issues disabled, so report through the run summary instead.
+          {
+            echo "## Fork sync with upstream failed"
+            echo
+            echo "Merge \`upstream/main\` locally, resolve the conflicts, then push to \`main\`."
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Fork sync with upstream failed::Merge upstream/main locally, resolve the conflicts, then push to main."
