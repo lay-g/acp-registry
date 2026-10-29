@@ -1,7 +1,7 @@
 {
   "id": "command-code",
   "name": "Command Code",
-  "version": "1.88.1",
+  "version": "1.88.2",
   "description": "Coding agent that continuously learns your coding taste",
   "repository": "https://github.com/CommandCodeAI/command-code",
   "website": "https://commandcode.ai",
@@ -12,7 +12,7 @@
   "license_url": "https://commandcode.ai/terms",
   "distribution": {
     "npx": {
-      "package": "command-code@1.88.1",
+      "package": "command-code@1.88.2",
       "args": [
         "acp"
       ]
