@@ -1,5 +1,5 @@
 {
   "unquarantine": ["qoder"],
-  "skip_verify": ["minimax-code"],
+  "skip_verify": ["kiro", "minimax-code"],
   "pin": {}
 }
