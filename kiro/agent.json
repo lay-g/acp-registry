@@ -1,7 +1,7 @@
 {
   "id": "kiro",
   "name": "Kiro",
-  "version": "2.33.0",
+  "version": "2.37.0",
   "description": "Kiro autonomous coding agent",
   "website": "https://kiro.dev",
   "authors": [
@@ -12,18 +12,20 @@
   "distribution": {
     "binary": {
       "linux-x86_64": {
-        "archive": "https://prod.download.cli.kiro.dev/stable/2.33.0/kirocli-x86_64-linux.tar.gz",
+        "archive": "https://prod.download.cli.kiro.dev/stable/2.37.0/kirocli-x86_64-linux.tar.gz",
         "cmd": "./kiro-cli",
         "args": [
           "acp"
-        ]
+        ],
+        "sha256": "02c49873ba64285f34048aac377ccf0b546b5627f39dd775bae9fa306112ff19"
       },
       "linux-aarch64": {
-        "archive": "https://prod.download.cli.kiro.dev/stable/2.33.0/kirocli-aarch64-linux.tar.gz",
+        "archive": "https://prod.download.cli.kiro.dev/stable/2.37.0/kirocli-aarch64-linux.tar.gz",
         "cmd": "./kiro-cli",
         "args": [
           "acp"
-        ]
+        ],
+        "sha256": "3588100df2addfbb2c6953698ea2d6e7d2b88c5ef664ec3235e08fa454219f68"
       },
       "darwin-aarch64": {
         "archive": "https://raw.githubusercontent.com/lay-g/acp-registry/main/kiro/launchers/kiro-darwin.zip",
