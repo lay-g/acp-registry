@@ -11,7 +11,7 @@
   "license_url": "https://agent.minimax.io/doc/en/terms-of-service.html",
   "distribution": {
     "npx": {
-      "package": "@minimax-ai/code@0.7.7",
+      "package": "@minimax-ai/code-acp@0.7.7",
       "args": [
         "acp"
       ]
