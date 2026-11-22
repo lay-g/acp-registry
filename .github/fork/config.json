@@ -1,5 +1,12 @@
 {
   "unquarantine": ["qoder"],
   "skip_verify": ["minimax-code"],
+  "owned": [
+    "antigravity-acp/",
+    ".github/workflows/build_registry.py",
+    ".github/workflows/custom_agent_sources/antigravity.py",
+    ".github/workflows/tests/test_antigravity_source.py",
+    ".github/workflows/tests/test_build_registry.py"
+  ],
   "pin": {}
 }

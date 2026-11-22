@@ -7,7 +7,7 @@ Subcommands:
     set ID=VERSION[@preview] ...       Force agents to a version (manual override)
     verify-changed [--exclude IDS]     Auth-check changed agents; revert those that fail
     summary                            Print a commit message for the working-tree changes
-    resolve-conflicts                  Resolve merge conflicts after an upstream merge
+    resolve-conflicts                  Restore fork-owned paths and resolve merge conflicts
 """
 
 import json
@@ -44,11 +44,16 @@ REGISTRY_URL_RE = re.compile(r"^https?://\S+$")
 FILE_URL_RE = re.compile(r"^https?://\S+/\S+\.[A-Za-z0-9]+$")
 
 
-def load_config() -> dict:
-    config = json.loads(CONFIG_PATH.read_text())
+def load_config(*, at_head: bool = False) -> dict:
+    if at_head:
+        config_text = git("show", f"HEAD:{CONFIG_PATH.relative_to(REPO_ROOT)}")
+    else:
+        config_text = CONFIG_PATH.read_text()
+    config = json.loads(config_text)
     return {
         "unquarantine": set(config.get("unquarantine", [])),
         "skip_verify": set(config.get("skip_verify", [])),
+        "owned": config.get("owned", []),
         "pin": dict(config.get("pin", {})),
     }
 
@@ -346,6 +351,10 @@ def merge_conflict_file(rel_path: str) -> bool:
 
 
 def cmd_resolve_conflicts(_argv: list[str]) -> None:
+    if git("rev-parse", "--verify", "MERGE_HEAD", check=False):
+        owned = load_config(at_head=True)["owned"]
+        if owned:
+            git("restore", "--source=HEAD", "--staged", "--worktree", "--", *owned)
     conflicted = git("diff", "--name-only", "--diff-filter=U").splitlines()
     unresolved = []
     for rel_path in conflicted:

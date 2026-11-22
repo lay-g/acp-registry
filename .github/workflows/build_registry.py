@@ -67,6 +67,9 @@ SKIP_URL_VALIDATION = os.environ.get("SKIP_URL_VALIDATION", "").lower() in (
     "true",
     "yes",
 )
+# Opt in only on hosts whose trusted DNS proxy assigns FakeIP addresses.
+ALLOW_FAKE_IP_DNS = os.environ.get("ALLOW_FAKE_IP_DNS", "").lower() in ("1", "true", "yes")
+FAKE_IP_NETWORK = ipaddress.IPv4Network("198.18.0.0/15")
 MAX_URL_REDIRECTS = 5
 
 
@@ -106,8 +109,14 @@ def is_public_https_url(url: str, retry_dns_errors: bool = False) -> bool:
             ip = ipaddress.ip_address(sockaddr[0])
         except ValueError:
             return False
-        if not ip.is_global or ip.is_multicast:
-            return False
+        if ip.is_global and not ip.is_multicast:
+            continue
+        if ALLOW_FAKE_IP_DNS and ip in FAKE_IP_NETWORK:
+            try:
+                socket.inet_aton(hostname)
+            except OSError:
+                continue
+        return False
 
     return bool(addresses)
 

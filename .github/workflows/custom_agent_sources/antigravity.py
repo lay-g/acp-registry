@@ -1,191 +1,105 @@
-"""Google Antigravity's stable channel.
+"""Google Antigravity CLI's stable channel."""
 
-Each promoted release is announced by one write-once link file on
-dl.google.com: `next/<from>/acp_next.json` names the version promoted after
-`<from>` and its per-platform archives. Starting from the registry's current
-version, follow links until a 404. A version with a `yanked/<v>/acp_yanked.json`
-marker is skipped; the newest version reached that isn't yanked wins.
-
-    {"version": "1.4.0",
-     "platforms": {"darwin-aarch64": {"archive": "https://dl.google.com/...",
-                                      "sha256": "...", "size": 111456962}, ...}}
-
-Link files never change once published, so a cached copy is always correct, and
-dl.google.com sends 404s without caching headers, so a new link is seen on the
-next run.
-"""
-
+import hashlib
 import json
-import os
 import re
+import tempfile
 import urllib.error
 import urllib.request
+from http.client import HTTPException
 from typing import NamedTuple
 
 from common import LatestRelease, ResolvedAsset, UpdateError
 from registry_utils import version_tuple
 
 AGENT_ID = "antigravity-acp"
-FEED_BASE = "https://dl.google.com/agy-extensions/releases/acp/feed/v1"
-ARCHIVE_PREFIXES = tuple(
-    f"https://dl.google.com/agy-extensions/releases/{os_dir}/"
-    for os_dir in ("macos", "linux", "windows")
-)
-PLATFORMS = frozenset(
-    {
-        "darwin-aarch64",
-        "darwin-x86_64",
-        "linux-x86_64",
-        "linux-aarch64",
-        "windows-x86_64",
-        "windows-aarch64",
-    }
-)
-MAX_HOPS = 50
-_SHA256 = re.compile(r"[0-9a-f]{64}")
+MANIFEST_BASE = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests"
+ARCHIVE_PREFIX = "https://storage.googleapis.com/antigravity-public/antigravity-cli/"
+PLATFORMS = {
+    "darwin-aarch64": "darwin_arm64",
+    "darwin-x86_64": "darwin_amd64",
+    "linux-x86_64": "linux_amd64",
+    "linux-aarch64": "linux_arm64",
+    "windows-x86_64": "windows_amd64",
+    "windows-aarch64": "windows_arm64",
+}
+_SHA512 = re.compile(r"[0-9a-fA-F]{128}")
 
 
 class _FeedError(Exception):
-    """dl.google.com is unreachable, or the feed is wrong."""
+    pass
 
 
-class _Hop(NamedTuple):
+class _Manifest(NamedTuple):
     version: str
-    assets: dict[str, ResolvedAsset]
-    sizes: dict[str, int]
-    link_url: str
-    yanked: bool
+    url: str
+    sha512: str
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    # A redirect could lead outside the allowlist, so surface 3xx as errors.
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
-_request_count = 0
 
 
-def _open(url: str, method: str):
-    """Sends a cache-busting request; returns None on 404."""
-    global _request_count
-    _request_count += 1
-    busted = f"{url}?r={os.environ.get('GITHUB_RUN_ID', 'local')}-{_request_count}"
-    req = urllib.request.Request(
-        busted,
-        method=method,
-        headers={
-            "User-Agent": "ACP-Registry-Version-Checker/1.0",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-        },
-    )
+def _open(url: str):
+    return _OPENER.open(url, timeout=30)
+
+
+def _get_manifest(platform: str) -> _Manifest:
+    url = f"{MANIFEST_BASE}/{PLATFORMS[platform]}.json"
     try:
-        return _OPENER.open(req, timeout=30)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise _FeedError(f"HTTP {e.code} for {url}") from e
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise _FeedError(f"{url}: {e}") from e
+        with _open(url) as response:
+            data = json.load(response)
+        version, archive, sha512 = data["version"], data["url"], data["sha512"]
+        version_tuple(version)
+        if not isinstance(archive, str) or not archive.startswith(ARCHIVE_PREFIX):
+            raise _FeedError("archive outside allowlist")
+        if not isinstance(sha512, str) or not _SHA512.fullmatch(sha512):
+            raise _FeedError("sha512 must contain 128 hex characters")
+    except (KeyError, ValueError, TypeError, OSError, HTTPException, _FeedError) as e:
+        raise _FeedError(f"{platform} manifest: {e}") from e
+    return _Manifest(version, archive, sha512.lower())
 
 
-def _get(url: str) -> tuple[int, bytes]:
-    """Returns (200, body) or (404, b"")."""
-    response = _open(url, "GET")
-    if response is None:
-        return 404, b""
-    with response:
-        return response.status, response.read()
-
-
-def _head(url: str) -> tuple[int, str, int]:
-    """Returns (status, content type, content length); status 404 if missing."""
-    response = _open(url, "HEAD")
-    if response is None:
-        return 404, "", -1
-    with response:
-        length = response.headers.get("Content-Length", "")
-        return (
-            response.status,
-            response.headers.get_content_type(),
-            int(length) if length.isdigit() else -1,
-        )
-
-
-def _parse_link(from_version: str, body: bytes, link_url: str) -> _Hop:
+def _resolve_archive(platform: str, manifest: _Manifest) -> ResolvedAsset:
     try:
-        data = json.loads(body)
-        version = data["version"]
-        platforms = data["platforms"]
-        if version_tuple(version) <= version_tuple(from_version):
-            raise _FeedError(f"next/{from_version} names {version}, which is not newer")
-    except (ValueError, KeyError, TypeError) as e:
-        raise _FeedError(f"next/{from_version}: malformed link: {e}") from e
-    if not isinstance(platforms, dict) or set(platforms) != PLATFORMS:
-        raise _FeedError(f"next/{from_version}: expected platforms {sorted(PLATFORMS)}")
-    assets: dict[str, ResolvedAsset] = {}
-    sizes: dict[str, int] = {}
-    for platform, entry in platforms.items():
-        entry = entry if isinstance(entry, dict) else {}
-        archive, sha256, size = entry.get("archive"), entry.get("sha256"), entry.get("size")
-        if not isinstance(archive, str) or not archive.startswith(ARCHIVE_PREFIXES):
-            raise _FeedError(f"next/{from_version}: {platform} archive outside allowlist")
-        if not isinstance(sha256, str) or not _SHA256.fullmatch(sha256):
-            raise _FeedError(f"next/{from_version}: {platform} sha256 is not 64 hex chars")
-        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
-            raise _FeedError(f"next/{from_version}: {platform} size must be a positive int")
-        assets[platform] = ResolvedAsset(archive_url=archive, sha256=sha256)
-        sizes[platform] = size
-    return _Hop(version, assets, sizes, link_url, yanked=False)
-
-
-def _walk(start: str) -> list[_Hop]:
-    """Follows links from `start` until a 404, noting yank markers."""
-    hops: list[_Hop] = []
-    version = start
-    for _ in range(MAX_HOPS):
-        link_url = f"{FEED_BASE}/next/{version}/acp_next.json"
-        status, body = _get(link_url)
-        if status == 404:
-            return hops
-        hop = _parse_link(version, body, link_url)
-        yank_status, _ = _get(f"{FEED_BASE}/yanked/{hop.version}/acp_yanked.json")
-        hops.append(hop._replace(yanked=yank_status == 200))
-        version = hop.version
-    raise _FeedError(f"chain longer than {MAX_HOPS} links from {start}")
-
-
-def _check_archives(hop: _Hop) -> None:
-    """Confirms each archive is a zip of the advertised size, not an error page."""
-    for platform, asset in sorted(hop.assets.items()):
-        status, content_type, length = _head(asset.archive_url)
-        if status != 200:
-            raise _FeedError(f"{hop.version} {platform}: HTTP {status} for {asset.archive_url}")
-        if content_type != "application/zip" or length != hop.sizes[platform]:
-            raise _FeedError(
-                f"{hop.version} {platform}: got {content_type}, {length} bytes; "
-                f"expected application/zip, {hop.sizes[platform]} bytes"
-            )
+        with _open(manifest.url) as response, tempfile.TemporaryFile() as archive:
+            sha512 = hashlib.sha512()
+            while chunk := response.read(1024 * 1024):
+                sha512.update(chunk)
+                archive.write(chunk)
+            if sha512.hexdigest() != manifest.sha512:
+                raise _FeedError("sha512 mismatch")
+            archive.seek(0)
+            sha256 = hashlib.file_digest(archive, "sha256").hexdigest()
+    except (OSError, HTTPException, _FeedError) as e:
+        raise _FeedError(f"{platform} archive: {e}") from e
+    return ResolvedAsset(archive_url=manifest.url, sha256=sha256)
 
 
 def get_stable_release(agent_data: dict) -> tuple[LatestRelease | None, UpdateError | None]:
-    """Returns the newest promoted, non-yanked release after the registry's version."""
     try:
-        hops = _walk(agent_data.get("version", ""))
-        candidates = [hop for hop in hops if not hop.yanked]
-        if not candidates:
+        manifests = {platform: _get_manifest(platform) for platform in PLATFORMS}
+        version = next(iter(manifests.values())).version
+        if any(manifest.version != version for manifest in manifests.values()):
+            versions = ", ".join(f"{platform}={m.version}" for platform, m in manifests.items())
+            raise _FeedError(f"CLI manifest versions disagree: {versions}")
+        if version_tuple(version) <= version_tuple(agent_data["version"]):
             return None, None
-        newest = candidates[-1]
-        _check_archives(newest)
-    except _FeedError as e:
+        assets = {
+            platform: _resolve_archive(platform, manifest)
+            for platform, manifest in manifests.items()
+        }
+    except (_FeedError, KeyError, TypeError, ValueError) as e:
         return None, UpdateError(AGENT_ID, f"feed: {e}")
 
     return LatestRelease(
-        version=newest.version,
+        version=version,
         distribution_type="binary",
-        source_url=newest.link_url,
+        source_url=MANIFEST_BASE,
         repository="",
-        resolved_assets=newest.assets,
+        resolved_assets=assets,
     ), None

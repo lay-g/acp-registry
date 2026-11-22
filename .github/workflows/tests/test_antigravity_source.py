@@ -1,343 +1,160 @@
-"""Tests for custom_agent_sources/antigravity.py."""
+"""Tests for the Antigravity CLI source and its version updater integration."""
 
+import hashlib
+import io
 import json
-import urllib.error
+import urllib.request
+from email.message import Message
 from pathlib import Path
-from unittest.mock import patch
+from urllib.response import addinfourl
 
 import pytest
 
 from custom_agent_sources import antigravity
-from update_versions import check_agent_version
+from update_versions import apply_update, check_agent_version
 
-BASE = antigravity.FEED_BASE
-_FILES = {
-    "darwin-aarch64": ("macos", "darwin-arm64"),
-    "darwin-x86_64": ("macos", "darwin-x86_64"),
-    "linux-x86_64": ("linux", "linux-x86_64"),
-    "linux-aarch64": ("linux", "linux-arm64"),
-    "windows-x86_64": ("windows", "windows-x86_64"),
-    "windows-aarch64": ("windows", "windows-arm64"),
+PLATFORMS = {
+    "darwin-aarch64": "darwin_arm64",
+    "darwin-x86_64": "darwin_amd64",
+    "linux-aarch64": "linux_arm64",
+    "linux-x86_64": "linux_amd64",
+    "windows-aarch64": "windows_arm64",
+    "windows-x86_64": "windows_amd64",
 }
-
-# Byte-for-byte the format Antigravity's publisher writes (sorted keys, indent 2).
-EXAMPLE_LINK = """{
-  "platforms": {
-    "darwin-aarch64": {
-      "archive": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-arm64.zip",
-      "sha256": "7cd97045f7b4fe81175a107cdf16f9c51484e3c78a5162cae415338bb6aa5b88",
-      "size": 111456962
-    },
-    "darwin-x86_64": {
-      "archive": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-x86_64.zip",
-      "sha256": "bb23956b89984bf5d354af2c3725e6c57f0cc1b7228e77a0e91c9c2bc1d47646",
-      "size": 117245544
-    },
-    "linux-aarch64": {
-      "archive": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-arm64.zip",
-      "sha256": "500b0bc0fb858e88f4df404d4cedf80bf9298c178291e39e383d6c50b111cbdf",
-      "size": 321690363
-    },
-    "linux-x86_64": {
-      "archive": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-x86_64.zip",
-      "sha256": "9fb60956af0a9d76220a4db91ca9ac88e2a2372ad68f985ab5fceace6b825b96",
-      "size": 333727150
-    },
-    "windows-aarch64": {
-      "archive": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-arm64.zip",
-      "sha256": "4a0f469720e9beb9438a979f543fdbfad5022ebe0992c052c590bd78b3144ca3",
-      "size": 124654803
-    },
-    "windows-x86_64": {
-      "archive": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-x86_64.zip",
-      "sha256": "65215e0688681fa3116e048a9eab27ef53af1bbd6f3da3f1c52bd4911d8b17f9",
-      "size": 124509787
-    }
-  },
-  "version": "1.3.0"
-}
-"""
-
-
-def _archive(version: str, platform: str) -> str:
-    os_dir, suffix = _FILES[platform]
-    return f"https://dl.google.com/agy-extensions/releases/{os_dir}/agy-acp-server-{version}-{suffix}.zip"
-
-
-def _link(version: str, **overrides) -> bytes:
-    platforms = {
-        p: {"archive": _archive(version, p), "sha256": "a" * 64, "size": 100} for p in _FILES
-    }
-    for platform, entry in overrides.pop("platforms", {}).items():
-        if entry is None:
-            platforms.pop(platform)
-        else:
-            platforms[platform] = entry
-    return json.dumps({"version": version, "platforms": platforms, **overrides}).encode()
-
-
-class FakeFeed:
-    """Serves chain links, yank markers, and archive HEADs from memory."""
-
-    def __init__(self, links: dict[str, bytes], yanked=(), heads=None, errors=None):
-        self.links = links
-        self.yanked = set(yanked)
-        self.heads = heads or {}
-        self.errors = errors or {}
-        self.requests: list[str] = []
-
-    def get(self, url: str) -> tuple[int, bytes]:
-        self.requests.append(url)
-        if url in self.errors:
-            raise self.errors[url]
-        for version, body in self.links.items():
-            if url == f"{BASE}/next/{version}/acp_next.json":
-                return 200, body
-        for version in self.yanked:
-            if url == f"{BASE}/yanked/{version}/acp_yanked.json":
-                return 200, b'{"version": "%s", "reason": "test"}' % version.encode()
-        return 404, b""
-
-    def head(self, url: str) -> tuple[int, str, int]:
-        self.requests.append(f"HEAD {url}")
-        if url in self.errors:
-            raise self.errors[url]
-        return self.heads.get(url, (200, "application/zip", 100))
+VERSION = "1.5.14"
 
 
 @pytest.fixture
-def feed():
-    def install(**kwargs):
-        fake = FakeFeed(**kwargs)
-        patchers = [
-            patch("custom_agent_sources.antigravity._get", side_effect=fake.get),
-            patch("custom_agent_sources.antigravity._head", side_effect=fake.head),
-        ]
-        for p in patchers:
-            p.start()
-        installed.extend(patchers)
-        return fake
+def feed(monkeypatch):
+    requests = []
+    manifests = {}
+    archives = {}
+    responses = {}
+    redirects = {}
+    for platform, slug in PLATFORMS.items():
+        suffix = ".exe" if platform.startswith("windows-") else ".tar.gz"
+        url = antigravity.ARCHIVE_PREFIX + VERSION + "/" + slug + suffix
+        body = f"CLI for {platform}".encode()
+        manifest = {"version": VERSION, "url": url, "sha512": hashlib.sha512(body).hexdigest()}
+        manifests[platform] = manifest
+        archives[platform] = url
+        responses[f"{antigravity.MANIFEST_BASE}/{slug}.json"] = manifest
+        responses[url] = body
 
-    installed: list = []
-    yield install
-    for p in installed:
-        p.stop()
+    def fake_https_open(_handler, request):
+        url = request.full_url
+        requests.append(url)
+        headers = Message()
+        status = 200
+        if url in redirects:
+            headers["Location"] = redirects[url]
+            status = 302
+            body = b""
+        else:
+            body = responses[url]
+            if isinstance(body, dict):
+                body = json.dumps(body).encode()
+        response = addinfourl(io.BytesIO(body), headers, url, status)
+        response.msg = "OK" if status == 200 else "Found"
+        return response
+
+    monkeypatch.setattr(urllib.request.HTTPSHandler, "https_open", fake_https_open)
+    return manifests, archives, responses, requests, redirects
 
 
-def _agent(version: str = "1.3.0") -> dict:
-    return {"id": "antigravity-acp", "version": version}
+def test_updater_preserves_launch_configuration(tmp_path, feed):
+    _, archives, responses, requests, _ = feed
+    path = tmp_path / "antigravity-acp" / "agent.json"
+    path.parent.mkdir()
+    current = json.loads((Path(__file__).parents[3] / "antigravity-acp/agent.json").read_text())
+    current["version"] = "1.5.13"
+    targets = current["distribution"]["binary"]
+    for target in targets.values():
+        target["archive"] = "https://example.com/previous"
+        target["sha256"] = "0" * 64
+    path.write_text(json.dumps(current))
+
+    update, error = check_agent_version(path, current)
+
+    assert error is None
+    assert update.latest_version == VERSION
+    assert apply_update(update)
+    expected = current
+    expected["version"] = VERSION
+    for platform, target in targets.items():
+        url = archives[platform]
+        target["archive"] = url
+        target["sha256"] = hashlib.sha256(responses[url]).hexdigest()
+    assert json.loads(path.read_text()) == expected
+    assert set(requests[:6]) == {
+        f"{antigravity.MANIFEST_BASE}/{slug}.json" for slug in PLATFORMS.values()
+    }
+    assert set(requests[6:]) == set(archives.values())
 
 
-class TestGetStableRelease:
-    def test_one_hop_returns_the_linked_version(self, feed):
-        feed(links={"1.3.0": _link("1.4.0")})
+@pytest.mark.parametrize("current", [VERSION, "1.5.100"])
+def test_equal_or_older_releases_are_not_downloaded(feed, current):
+    _, _, _, requests, _ = feed
 
-        release, error = antigravity.get_stable_release(_agent())
+    assert antigravity.get_stable_release({"version": current}) == (None, None)
+    assert len(requests) == 6
 
-        assert error is None
-        assert release.version == "1.4.0"
-        assert release.distribution_type == "binary"
-        assert release.source_url == f"{BASE}/next/1.3.0/acp_next.json"
-        assert set(release.resolved_assets) == set(_FILES)
-        assert release.resolved_assets["linux-aarch64"].archive_url == _archive(
-            "1.4.0", "linux-aarch64"
-        )
 
-    def test_follows_the_chain_to_the_end(self, feed):
-        fake = feed(links={"1.3.0": _link("1.4.0"), "1.4.0": _link("1.4.1")})
+def test_inconsistent_versions_are_rejected_before_download(feed):
+    manifests, _, _, requests, _ = feed
+    manifests["windows-aarch64"]["version"] = "1.5.15"
 
-        release, error = antigravity.get_stable_release(_agent())
+    release, error = antigravity.get_stable_release({"version": "1.5.13"})
 
-        assert error is None
-        assert release.version == "1.4.1"
-        assert fake.requests[:5] == [
-            f"{BASE}/next/1.3.0/acp_next.json",
-            f"{BASE}/yanked/1.4.0/acp_yanked.json",
-            f"{BASE}/next/1.4.0/acp_next.json",
-            f"{BASE}/yanked/1.4.1/acp_yanked.json",
-            f"{BASE}/next/1.4.1/acp_next.json",
-        ]
-        assert sum(r.startswith("HEAD ") for r in fake.requests) == 6
+    assert release is None
+    assert "versions disagree" in error.error
+    assert "windows-aarch64=1.5.15" in error.error
+    assert len(requests) == 6
 
-    def test_no_link_for_current_version_means_no_update(self, feed):
-        fake = feed(links={})
 
-        assert antigravity.get_stable_release(_agent()) == (None, None)
-        assert fake.requests == [f"{BASE}/next/1.3.0/acp_next.json"]
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("url", "https://storage.googleapis.com/antigravity-public/other/cli.tar.gz", "allowlist"),
+        ("sha512", "bad", "128 hex characters"),
+        ("version", None, "Unsupported version"),
+    ],
+)
+def test_invalid_manifest_is_rejected(feed, field, value, message):
+    manifests, _, _, requests, _ = feed
+    manifests["linux-x86_64"][field] = value
 
-    def test_yanked_version_is_skipped(self, feed):
-        feed(links={"1.3.0": _link("1.4.0"), "1.4.0": _link("1.4.1")}, yanked={"1.4.0"})
+    release, error = antigravity.get_stable_release({"version": "1.5.13"})
 
-        release, error = antigravity.get_stable_release(_agent())
+    assert release is None
+    assert "linux-x86_64 manifest:" in error.error
+    assert message in error.error
+    assert all(url.startswith(antigravity.MANIFEST_BASE) for url in requests)
 
-        assert error is None
-        assert release.version == "1.4.1"
 
-    def test_yanked_tail_falls_back_to_the_newest_good_version(self, feed):
-        fake = feed(links={"1.3.0": _link("1.4.0"), "1.4.0": _link("1.4.1")}, yanked={"1.4.1"})
+def test_checksum_mismatch_discards_release(feed):
+    _, archives, responses, _, _ = feed
+    responses[archives["windows-x86_64"]] = b"invalid binary"
 
-        release, error = antigravity.get_stable_release(_agent())
+    release, error = antigravity.get_stable_release({"version": "1.5.13"})
 
-        assert error is None
-        assert release.version == "1.4.0"
-        assert f"HEAD {_archive('1.4.0', 'darwin-aarch64')}" in fake.requests
+    assert release is None
+    assert "windows-x86_64 archive: sha512 mismatch" in error.error
 
-    def test_every_new_version_yanked_means_no_update(self, feed):
-        # e.g. a maintainer rolled the registry back to 1.3.0 after yanking 1.4.0.
-        fake = feed(links={"1.3.0": _link("1.4.0")}, yanked={"1.4.0"})
 
-        assert antigravity.get_stable_release(_agent()) == (None, None)
-        assert not any(r.startswith("HEAD ") for r in fake.requests)
-
-    def test_missing_platform_is_an_error(self, feed):
-        feed(links={"1.3.0": _link("1.4.0", platforms={"windows-aarch64": None})})
-
-        release, error = antigravity.get_stable_release(_agent())
-
-        assert release is None
-        assert error.agent_id == "antigravity-acp"
-        assert "expected platforms" in error.error
-
-    def test_archive_outside_allowlist_is_an_error(self, feed):
-        bad = {"archive": "https://example.com/agy.zip", "sha256": "a" * 64, "size": 100}
-        feed(links={"1.3.0": _link("1.4.0", platforms={"linux-x86_64": bad})})
-
-        release, error = antigravity.get_stable_release(_agent())
-
-        assert release is None
-        assert "allowlist" in error.error
-
-    @pytest.mark.parametrize(
-        "entry",
-        [
-            {"sha256": "ABC"},
-            {"sha256": "a" * 63},
-            {"size": 0},
-            {"size": "100"},
-            {"size": True},
-        ],
+@pytest.mark.parametrize("kind", ["manifest", "archive"])
+def test_redirects_are_rejected(feed, kind):
+    _, archives, _, requests, redirects = feed
+    url = (
+        f"{antigravity.MANIFEST_BASE}/darwin_arm64.json"
+        if kind == "manifest"
+        else archives["darwin-aarch64"]
     )
-    def test_bad_asset_fields_are_errors(self, feed, entry):
-        asset = {"archive": _archive("1.4.0", "linux-x86_64"), "sha256": "a" * 64, "size": 100}
-        feed(links={"1.3.0": _link("1.4.0", platforms={"linux-x86_64": {**asset, **entry}})})
+    redirect = "https://example.test/redirected"
+    redirects[url] = redirect
 
-        release, error = antigravity.get_stable_release(_agent())
+    release, error = antigravity.get_stable_release({"version": "1.5.13"})
 
-        assert release is None
-        assert error is not None
-
-    def test_version_going_down_is_an_error(self, feed):
-        feed(links={"1.3.0": _link("1.2.9")})
-
-        release, error = antigravity.get_stable_release(_agent())
-
-        assert release is None
-        assert "not newer" in error.error
-
-    def test_malformed_json_is_an_error(self, feed):
-        feed(links={"1.3.0": b"<html>oops</html>"})
-
-        release, error = antigravity.get_stable_release(_agent())
-
-        assert release is None
-        assert "malformed" in error.error
-
-    def test_chain_longer_than_cap_is_an_error(self, feed, monkeypatch):
-        monkeypatch.setattr(antigravity, "MAX_HOPS", 2)
-        feed(links={"1.3.0": _link("1.4.0"), "1.4.0": _link("1.4.1"), "1.4.1": _link("1.4.2")})
-
-        release, error = antigravity.get_stable_release(_agent())
-
-        assert release is None
-        assert "longer than 2" in error.error
-
-    @pytest.mark.parametrize(
-        "head",
-        [
-            (404, "", -1),
-            (200, "text/html", 100),
-            (200, "application/zip", 99),
-        ],
-    )
-    def test_archive_that_is_not_the_advertised_zip_is_an_error(self, feed, head):
-        url = _archive("1.4.0", "windows-x86_64")
-        feed(links={"1.3.0": _link("1.4.0")}, heads={url: head})
-
-        release, error = antigravity.get_stable_release(_agent())
-
-        assert release is None
-        assert "windows-x86_64" in error.error
-
-    def test_feed_unavailable_is_an_error(self, feed):
-        url = f"{BASE}/next/1.3.0/acp_next.json"
-        feed(links={}, errors={url: antigravity._FeedError(f"HTTP 503 for {url}")})
-
-        release, error = antigravity.get_stable_release(_agent())
-
-        assert release is None
-        assert "HTTP 503" in error.error
-
-    def test_archive_head_timeout_is_an_error(self, feed):
-        url = _archive("1.4.0", "darwin-x86_64")
-        feed(links={"1.3.0": _link("1.4.0")}, errors={url: antigravity._FeedError("timeout")})
-
-        release, error = antigravity.get_stable_release(_agent())
-
-        assert release is None
-        assert "timeout" in error.error
-
-
-class TestHttpStatusMapping:
-    def _open_raising(self, exc):
-        return patch.object(antigravity._OPENER, "open", side_effect=exc)
-
-    def _http_error(self, code: int) -> urllib.error.HTTPError:
-        return urllib.error.HTTPError("https://dl.google.com/x", code, "msg", {}, None)
-
-    def test_404_is_end_of_chain(self):
-        with self._open_raising(self._http_error(404)):
-            assert antigravity._get(f"{BASE}/next/1.3.0/acp_next.json") == (404, b"")
-
-    @pytest.mark.parametrize("code", [301, 302, 307, 403, 500, 502, 503])
-    def test_redirects_4xx_and_5xx_are_feed_errors(self, code):
-        with self._open_raising(self._http_error(code)), pytest.raises(antigravity._FeedError):
-            antigravity._get(f"{BASE}/next/1.3.0/acp_next.json")
-
-    def test_network_error_is_a_feed_error(self):
-        with (
-            self._open_raising(urllib.error.URLError("refused")),
-            pytest.raises(antigravity._FeedError),
-        ):
-            antigravity._get(f"{BASE}/next/1.3.0/acp_next.json")
-
-    def test_requests_bypass_caches(self):
-        with self._open_raising(self._http_error(404)) as open_:
-            antigravity._get(f"{BASE}/next/1.3.0/acp_next.json")
-        request = open_.call_args.args[0]
-        assert "?r=" in request.full_url
-        assert request.get_header("Cache-control") == "no-cache"
-
-
-class TestExampleLink:
-    def test_publisher_format_parses(self):
-        hop = antigravity._parse_link("0.0.1", EXAMPLE_LINK.encode(), "url")
-
-        assert hop.version == "1.3.0"
-        assert hop.sizes["darwin-aarch64"] == 111456962
-        assert hop.assets["linux-aarch64"].archive_url.endswith("-linux-arm64.zip")
-
-
-class TestRegistration:
-    def test_update_versions_uses_the_plugin(self, feed):
-        feed(links={"1.3.0": _link("1.4.0")})
-        agent_data = {
-            "id": "antigravity-acp",
-            "version": "1.3.0",
-            "distribution": {"binary": {p: {"archive": "x", "cmd": "./a"} for p in _FILES}},
-        }
-
-        update, error = check_agent_version(Path("antigravity-acp/agent.json"), agent_data)
-
-        assert error is None
-        assert update.latest_version == "1.4.0"
-        assert update.resolved_assets["darwin-aarch64"].sha256 == "a" * 64
+    assert release is None
+    assert f"darwin-aarch64 {kind}: HTTP Error 302" in error.error
+    assert redirect not in requests

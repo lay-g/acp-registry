@@ -1,7 +1,7 @@
 {
   "id": "antigravity-acp",
   "name": "Google Antigravity",
-  "version": "1.5.2",
+  "version": "1.5.14",
   "description": "Google\u2019s AI coding agent",
   "website": "https://antigravity.google/docs/ide/extensions",
   "authors": [
@@ -12,40 +12,82 @@
   "distribution": {
     "binary": {
       "darwin-aarch64": {
-        "archive": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.5.2-darwin-arm64.zip",
-        "cmd": "./agy_acp_server.par",
-        "sha256": "123a16d5c40a8ac99e20f01a62b68dd860fd96b1c528dfb8eaa37ca8733d4845"
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.14-5302690847260672/darwin-arm/cli_mac_arm64.tar.gz",
+        "cmd": "./antigravity",
+        "sha256": "b01bdd4591e13ddfcb0e049bea74ae9f83e80829adcf64aaa58f5bfb1a425a54",
+        "args": [
+          "acp",
+          "--app-data-dir",
+          "antigravity-acp"
+        ],
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
       },
       "darwin-x86_64": {
-        "archive": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.5.2-darwin-x86_64.zip",
-        "cmd": "./agy_acp_server.par",
-        "sha256": "92addb5580577b5356d35484d72d1a113d9c5312ad766bcb304983aa8e3fbb06"
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.14-5302690847260672/darwin-x64/cli_mac_x64.tar.gz",
+        "cmd": "./antigravity",
+        "sha256": "c142141141cbaa93f4e46904b76341e349f3f2b78445f877f39468dfe60dda1e",
+        "args": [
+          "acp",
+          "--app-data-dir",
+          "antigravity-acp"
+        ],
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
       },
       "linux-x86_64": {
-        "archive": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.5.2-linux-x86_64.zip",
-        "cmd": "./agy_acp_server.par",
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.14-5302690847260672/linux-x64/cli_linux_x64.tar.gz",
+        "cmd": "./antigravity",
         "args": [
-          "--uid="
+          "acp",
+          "--app-data-dir",
+          "antigravity-acp"
         ],
-        "sha256": "99dd8612450805011619d7b8447ce374c289e00549d8557f36790e1dd6256852"
+        "sha256": "d58386322d2073e96b33f7cc32b4e9ae2db6228f58440369725967b2de48c7b5",
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
       },
       "linux-aarch64": {
-        "archive": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.5.2-linux-arm64.zip",
-        "cmd": "./agy_acp_server.par",
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.14-5302690847260672/linux-arm/cli_linux_arm64.tar.gz",
+        "cmd": "./antigravity",
         "args": [
-          "--uid="
+          "acp",
+          "--app-data-dir",
+          "antigravity-acp"
         ],
-        "sha256": "e729e05ef54ef0763e48900032466b47fa7c9939cde257f93ba49410ab577acb"
+        "sha256": "e5f69a3123fac66974b303d9a201f381a0fb32b3ef869d9139da85d5caf67a2a",
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
       },
       "windows-x86_64": {
-        "archive": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.5.2-windows-x86_64.zip",
-        "cmd": "./agy_acp_server.exe",
-        "sha256": "5cbadd4f4df698572473d8890fc26ec2dc1724501f06e3a963941daec2bd21d6"
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.14-5302690847260672/windows-x64/cli_windows_x64.exe",
+        "cmd": "./antigravity.exe",
+        "sha256": "34352ef15084b2d6c71bcc6e95a232425203223245e5cae82343d69495c3bd42",
+        "args": [
+          "acp",
+          "--app-data-dir",
+          "antigravity-acp"
+        ],
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
       },
       "windows-aarch64": {
-        "archive": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.5.2-windows-arm64.zip",
-        "cmd": "./agy_acp_server.exe",
-        "sha256": "8a4b2ea8df2ffefae33309348752e9119d21a6d36090c0eb48631c2e8f5781ab"
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.14-5302690847260672/windows-arm/cli_windows_arm64.exe",
+        "cmd": "./antigravity.exe",
+        "sha256": "fbb00e7c0449388f62cf9e03b1257b7f81bc450a1bbfebb370267ec8e4b35c83",
+        "args": [
+          "acp",
+          "--app-data-dir",
+          "antigravity-acp"
+        ],
+        "env": {
+          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
+        }
       }
     }
   }

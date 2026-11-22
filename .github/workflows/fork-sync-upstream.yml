@@ -43,10 +43,11 @@ jobs:
             exit 0
           fi
 
-          if ! git merge --no-edit upstream/main; then
-            python3 .github/fork/fork_tools.py resolve-conflicts
-            git commit --no-edit
+          if ! git merge --no-ff --no-commit upstream/main; then
+            git rev-parse --verify MERGE_HEAD >/dev/null
           fi
+          python3 .github/fork/fork_tools.py resolve-conflicts
+          git commit --no-edit
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7

@@ -1,5 +1,9 @@
 """Tests for fork_tools.py. Run: uv run --with pytest pytest .github/fork -q"""
 
+import json
+
+import pytest
+
 import fork_tools
 from fork_tools import (
     merge_conflict_hunks,
@@ -137,3 +141,53 @@ def test_merge_conflict_hunks_keeps_unresolvable_hunk():
         ">>>>>>> upstream/main\n"
     )
     assert merge_conflict_hunks(text, (merge_import_hunk,)) is None
+
+
+@pytest.mark.parametrize("conflict", [False, True], ids=["clean-merge", "conflicted-merge"])
+def test_upstream_merge_preserves_owned_paths(tmp_path, monkeypatch, conflict):
+    monkeypatch.setattr(fork_tools, "REPO_ROOT", tmp_path)
+    config_path = tmp_path / ".github/fork/config.json"
+    monkeypatch.setattr(fork_tools, "CONFIG_PATH", config_path)
+    agent_path = tmp_path / "antigravity-acp/agent.json"
+    source = tmp_path / ".github/workflows/custom_agent_sources/antigravity.py"
+    extra = agent_path.with_name("upstream-extra")
+    unrelated = tmp_path / "upstream.txt"
+    for path in (config_path, agent_path, source):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"owned": ["antigravity-acp/", source.relative_to(tmp_path).as_posix()]})
+    )
+    git = fork_tools.git
+    git("init", "-b", "main")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+    agent_path.write_text("base agent\n")
+    source.write_text("base source\n")
+    git("add", ".")
+    git("commit", "-m", "base")
+    git("branch", "upstream")
+    if conflict:
+        agent_path.write_text("fork agent\n")
+        source.write_text("fork source\n")
+    git("add", ".")
+    git("commit", "--allow-empty", "-m", "fork")
+    git("switch", "upstream")
+    agent_path.write_text("upstream agent\n")
+    source.write_text("upstream source\n")
+    config_path.write_text(json.dumps({"owned": []}))
+    extra.write_text("upstream addition in owned directory\n")
+    unrelated.write_text("upstream addition outside owned paths\n")
+    git("add", ".")
+    git("commit", "-m", "upstream")
+    git("switch", "main")
+
+    git("merge", "--no-ff", "--no-commit", "upstream", check=False)
+    assert bool(git("diff", "--name-only", "--diff-filter=U")) == conflict
+    fork_tools.cmd_resolve_conflicts([])
+    git("commit", "--no-edit")
+
+    assert git("diff", "HEAD^1", "HEAD", "--", "antigravity-acp/", str(source)) == ""
+    assert not extra.exists()
+    assert unrelated.read_text() == "upstream addition outside owned paths\n"
+    assert git("rev-parse", "HEAD^2") == git("rev-parse", "upstream")
+    assert git("status", "--porcelain") == ""

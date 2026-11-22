@@ -72,6 +72,29 @@ class TestUrlSafety:
 
         assert is_public_https_url("https://example.com/archive.tar.gz")
 
+    @pytest.mark.parametrize(
+        ("enabled", "hostname", "ips", "allowed"),
+        [
+            (False, "example.com", ["198.18.0.180"], False),
+            (True, "example.com", ["198.18.0.180"], True),
+            (True, "example.com", ["198.19.1.93"], True),
+            (True, "example.com", ["198.19.1.93", "93.184.216.34"], True),
+            (True, "example.com", ["198.19.1.93", "10.0.0.1"], False),
+            (True, "example.com", ["127.0.0.1"], False),
+            (True, "example.com", ["100.64.0.1"], False),
+            (True, "198.18.0.180", ["198.18.0.180"], False),
+            (True, "0xc61200b4", ["198.18.0.180"], False),
+        ],
+    )
+    def test_fake_ip_dns_requires_opt_in(self, monkeypatch, enabled, hostname, ips, allowed):
+        monkeypatch.setattr("build_registry.ALLOW_FAKE_IP_DNS", enabled)
+        monkeypatch.setattr(
+            "build_registry.socket.getaddrinfo",
+            lambda *args, **kwargs: [result for ip in ips for result in socket_result(ip)],
+        )
+
+        assert is_public_https_url(f"https://{hostname}/archive.tar.gz") is allowed
+
     def test_url_exists_retries_transient_dns_failure(self, monkeypatch):
         calls = 0
 
