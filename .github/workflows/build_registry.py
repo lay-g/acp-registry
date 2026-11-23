@@ -17,7 +17,6 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from registry_utils import (
-    COMPATIBILITY_IDS,
     UVX_VERSION_PATTERN,
     extract_npm_package_name,
     extract_npm_package_version,
@@ -26,8 +25,16 @@ from registry_utils import (
     resolve_preview_entry,
     should_skip_dir,
     strip_preview,
-    with_compatibility_entries,
 )
+
+try:  # Upstream ships these; until the next sync merge lands they are absent.
+    from registry_utils import COMPATIBILITY_IDS, with_compatibility_entries
+except ImportError:
+    COMPATIBILITY_IDS = {}
+
+    def with_compatibility_entries(agents: list[dict]) -> list[dict]:
+        return agents
+
 
 try:
     import jsonschema
