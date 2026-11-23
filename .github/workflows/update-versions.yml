@@ -356,7 +356,7 @@ jobs:
           check-latest: true
 
       - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
 
       - name: Verify updated agents
         env:
@@ -591,7 +591,7 @@ jobs:
           PY
 
       - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
 
       # URLs of the committed agents were checked in verify-updates; the rest are unchanged from main
       - name: Validate registry build
@@ -661,7 +661,7 @@ jobs:
       # action can trigger the registry publication workflow.
       - name: Generate GitHub token
         if: steps.commit.outputs.committed == 'true'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         id: generate-token
         with:
           # GitHub App ID secret name
