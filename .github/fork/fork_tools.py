@@ -236,6 +236,21 @@ def version_keys(agent: dict) -> tuple[tuple, tuple]:
     return semver_sort_key(agent.get("version") or "0.0.0"), semver_sort_key(preview)
 
 
+def staged_json(rel_path: str, stage: int) -> dict | None:
+    """Load one merge stage blob; None when the stage does not exist."""
+    try:
+        return json.loads(git("show", f":{stage}:{rel_path}"))
+    except subprocess.CalledProcessError:
+        return None
+
+
+def follows_upstream_deletion(base: dict | None, ours: dict | None) -> bool:
+    """Upstream deleted the manifest and the fork only bumped its version."""
+    if base is None or ours is None:
+        return False
+    return strip_volatile(ours) == strip_volatile(base)
+
+
 def resolve_agent_conflict(base: dict, ours: dict, theirs: dict) -> dict | None:
     """Pick the side with the newer versions; None when it needs a human."""
     ours_keys, theirs_keys = version_keys(ours), version_keys(theirs)
@@ -269,9 +284,7 @@ def parse_source_entries(text: str) -> list[tuple[str, str, str, str]] | None:
         match = SOURCE_ENTRY_RE.match(line)
         if not match:
             return None
-        entries.append(
-            (match.group("agent"), match.group("channel"), match.group("fn"), line)
-        )
+        entries.append((match.group("agent"), match.group("channel"), match.group("fn"), line))
     return entries or None
 
 
@@ -288,9 +301,7 @@ def merge_source_entries_hunk(ours: str, theirs: str) -> str | None:
             return None
     lines = [line for *_, line in ours_entries]
     lines += [
-        line
-        for agent, channel, _, line in theirs_entries
-        if (agent, channel) not in ours_by_key
+        line for agent, channel, _, line in theirs_entries if (agent, channel) not in ours_by_key
     ]
     return "\n".join(lines)
 
@@ -325,6 +336,7 @@ CONFLICT_HANDLERS = {
 
 def merge_conflict_hunks(text: str, handlers) -> str | None:
     """Merge every conflict hunk in text; None when a hunk cannot be merged."""
+
     def replace(match: re.Match) -> str:
         for handler in handlers:
             merged = handler(match.group("ours"), match.group("theirs"))
@@ -360,11 +372,13 @@ def cmd_resolve_conflicts(_argv: list[str]) -> None:
     for rel_path in conflicted:
         parts = Path(rel_path).parts
         if len(parts) == 2 and parts[1] == "agent.json":
-            try:
-                base, ours, theirs = (
-                    json.loads(git("show", f":{stage}:{rel_path}")) for stage in (1, 2, 3)
-                )
-            except subprocess.CalledProcessError:
+            base, ours, theirs = (staged_json(rel_path, stage) for stage in (1, 2, 3))
+            if theirs is None and follows_upstream_deletion(base, ours):
+                # Upstream retired the agent; nothing fork-specific is lost.
+                git("rm", "--quiet", rel_path)
+                print(f"Followed upstream deletion of {rel_path}")
+                continue
+            if base is None or ours is None or theirs is None:
                 unresolved.append(rel_path)
                 continue
             chosen = resolve_agent_conflict(base, ours, theirs)

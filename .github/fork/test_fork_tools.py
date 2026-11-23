@@ -2,9 +2,8 @@
 
 import json
 
-import pytest
-
 import fork_tools
+import pytest
 from fork_tools import (
     merge_conflict_hunks,
     merge_import_hunk,
@@ -122,24 +121,14 @@ def test_merge_conflict_hunks_resolves_both_hunks():
         ">>>>>>> upstream/main\n"
         "tail\n"
     )
-    merged = merge_conflict_hunks(
-        text, (merge_import_hunk, merge_source_entries_hunk)
-    )
+    merged = merge_conflict_hunks(text, (merge_import_hunk, merge_source_entries_hunk))
     assert merged == (
-        "head\n"
-        "from custom_agent_sources import CustomSourceFn, junie, kiro, opencode_v2\n"
-        "tail\n"
+        "head\nfrom custom_agent_sources import CustomSourceFn, junie, kiro, opencode_v2\ntail\n"
     )
 
 
 def test_merge_conflict_hunks_keeps_unresolvable_hunk():
-    text = (
-        "<<<<<<< HEAD\n"
-        "ours only\n"
-        "=======\n"
-        "theirs only\n"
-        ">>>>>>> upstream/main\n"
-    )
+    text = "<<<<<<< HEAD\nours only\n=======\ntheirs only\n>>>>>>> upstream/main\n"
     assert merge_conflict_hunks(text, (merge_import_hunk,)) is None
 
 
@@ -189,5 +178,54 @@ def test_upstream_merge_preserves_owned_paths(tmp_path, monkeypatch, conflict):
     assert git("diff", "HEAD^1", "HEAD", "--", "antigravity-acp/", str(source)) == ""
     assert not extra.exists()
     assert unrelated.read_text() == "upstream addition outside owned paths\n"
+    assert git("rev-parse", "HEAD^2") == git("rev-parse", "upstream")
+    assert git("status", "--porcelain") == ""
+
+
+def test_upstream_deletion_is_followed_when_fork_only_bumped_version():
+    assert fork_tools.follows_upstream_deletion(agent("1.0.0"), agent("1.1.0"))
+
+
+def test_upstream_deletion_needs_human_when_fork_made_structural_change():
+    assert not fork_tools.follows_upstream_deletion(agent("1.0.0"), agent("1.1.0", args=["acp"]))
+    assert not fork_tools.follows_upstream_deletion(None, agent("1.1.0"))
+
+
+def test_merge_resolves_upstream_deleted_agent(tmp_path, monkeypatch):
+    monkeypatch.setattr(fork_tools, "REPO_ROOT", tmp_path)
+    config_path = tmp_path / ".github/fork/config.json"
+    monkeypatch.setattr(fork_tools, "CONFIG_PATH", config_path)
+    manifest_path = tmp_path / "opencode-v2/agent.json"
+    keep_path = tmp_path / "kept/agent.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps({"owned": []}))
+    git = fork_tools.git
+    git("init", "-b", "main")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+    manifest_path.parent.mkdir()
+    keep_path.parent.mkdir()
+    manifest_path.write_text(json.dumps(agent("1.0.0"), indent=2) + "\n")
+    keep_path.write_text(json.dumps(agent("1.0.0"), indent=2) + "\n")
+    git("add", ".")
+    git("commit", "-m", "base")
+    git("branch", "upstream")
+    manifest_path.write_text(json.dumps(agent("1.1.0"), indent=2) + "\n")
+    git("add", ".")
+    git("commit", "-m", "fork bump")
+    git("switch", "upstream")
+    git("rm", "--quiet", "opencode-v2/agent.json")
+    keep_path.write_text(json.dumps(agent("1.2.0"), indent=2) + "\n")
+    git("add", ".")
+    git("commit", "-m", "upstream deletes agent")
+    git("switch", "main")
+
+    git("merge", "--no-ff", "--no-commit", "upstream", check=False)
+    assert "opencode-v2/agent.json" in git("diff", "--name-only", "--diff-filter=U")
+    fork_tools.cmd_resolve_conflicts([])
+    git("commit", "--no-edit")
+
+    assert not manifest_path.exists()
+    assert json.loads(keep_path.read_text())["version"] == "1.2.0"
     assert git("rev-parse", "HEAD^2") == git("rev-parse", "upstream")
     assert git("status", "--porcelain") == ""
