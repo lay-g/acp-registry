@@ -1,7 +1,7 @@
 {
   "id": "antigravity-acp",
   "name": "Google Antigravity",
-  "version": "1.5.18",
+  "version": "1.5.19",
   "description": "Google\u2019s AI coding agent",
   "website": "https://antigravity.google/docs/ide/extensions",
   "authors": [
@@ -12,9 +12,9 @@
   "distribution": {
     "binary": {
       "darwin-aarch64": {
-        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/darwin-arm/cli_mac_arm64.tar.gz",
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.19-4821414830800896/darwin-arm/cli_mac_arm64.tar.gz",
         "cmd": "./antigravity",
-        "sha256": "f154fdbe81885c36565b74615a9ef6c7c92fb9c2bc29acb0a300bc5990691871",
+        "sha256": "4f1603c9de8c993a83a12ec06b7342b6fb7c27853e9d9fb6c786286461d1ff50",
         "args": [
           "acp"
         ],
@@ -23,9 +23,9 @@
         }
       },
       "darwin-x86_64": {
-        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/darwin-x64/cli_mac_x64.tar.gz",
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.19-4821414830800896/darwin-x64/cli_mac_x64.tar.gz",
         "cmd": "./antigravity",
-        "sha256": "113e058df8c3e488c90f64ebb1dbdf7763ca01af7027ecfd73ae189f3c530366",
+        "sha256": "a8507272963d5a93f18bede59f6ba1efc29f6978a193a4ee5c9ad39a247b993e",
         "args": [
           "acp"
         ],
@@ -34,31 +34,31 @@
         }
       },
       "linux-x86_64": {
-        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/linux-x64/cli_linux_x64.tar.gz",
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.19-4821414830800896/linux-x64/cli_linux_x64.tar.gz",
         "cmd": "./antigravity",
         "args": [
           "acp"
         ],
-        "sha256": "a4960723ed9cf5b5ac72ed541db8df4d62741795261eb93a4681006ccb23d5ad",
+        "sha256": "971a4aa707fb0886d4e1df5f1f50bad7b01aa492d0b1f13df4ea7402e96dae90",
         "env": {
           "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
         }
       },
       "linux-aarch64": {
-        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/linux-arm/cli_linux_arm64.tar.gz",
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.19-4821414830800896/linux-arm/cli_linux_arm64.tar.gz",
         "cmd": "./antigravity",
         "args": [
           "acp"
         ],
-        "sha256": "97799abac91ba0b29b77598b62f903b866461da17680263a182fef2cb796ab0d",
+        "sha256": "aa316ff45b0d40b49ed83d29e3865857fca0c125f350fbb9d3c1cb9a640b49c4",
         "env": {
           "AGY_CLI_DISABLE_AUTO_UPDATE": "true"
         }
       },
       "windows-x86_64": {
-        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/windows-x64/cli_windows_x64.exe",
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.19-4821414830800896/windows-x64/cli_windows_x64.exe",
         "cmd": "./antigravity.exe",
-        "sha256": "a3c1da45993afff85849d15c0c0bdfef1eed8d048489f9c03f046ec3f8d3221d",
+        "sha256": "32cae15a97355bdea2116f58a0b481d62c0dca5530e8bd048dacefcb311dfd5e",
         "args": [
           "acp"
         ],
@@ -67,9 +67,9 @@
         }
       },
       "windows-aarch64": {
-        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/windows-arm/cli_windows_arm64.exe",
+        "archive": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.19-4821414830800896/windows-arm/cli_windows_arm64.exe",
         "cmd": "./antigravity.exe",
-        "sha256": "3700b2b109bc83e30abdf72a70ed26f1fb630b70edaa088a8b57b137e9f87ba5",
+        "sha256": "054ebf6a4299d5a2d88abb8706b444139735a1fe3845c4486a79dd5eedd245d9",
         "args": [
           "acp"
         ],
